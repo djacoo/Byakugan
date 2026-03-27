@@ -33,6 +33,13 @@ def update() -> None:
 
 
 @app.command()
+def sync() -> None:
+    """Re-detect the project stack and update the stored profile if it has drifted."""
+    from byakugan.commands.sync import run
+    run()
+
+
+@app.command()
 def add(
     template: Annotated[str, typer.Argument(help="Template path, e.g. languages/python.md")],
 ) -> None:
@@ -66,7 +73,7 @@ def list_templates() -> None:
 
 @app.command()
 def doctor() -> None:
-    """Diagnose and repair the Byakugan setup."""
+    """Diagnose and repair the Byakugan setup (includes stack drift check)."""
     from byakugan.commands.doctor import run
     run()
 
@@ -74,10 +81,22 @@ def doctor() -> None:
 @app.command()
 def remember(
     note: Annotated[str, typer.Argument(help='Memory to store, e.g. "correction: do not use X"')],
+    importance: Annotated[int, typer.Option("--importance", "-i", help="Importance 1-5 (auto-inferred if omitted).")] = 3,
 ) -> None:
     """Store a memory in this project's knowledge base."""
     from byakugan.commands.remember import run
-    run(note)
+    run(note, importance=importance)
+
+
+# ── memories subcommand group ─────────────────────────────────────────────────
+
+from byakugan.commands.memories import app as _memories_app
+
+app.add_typer(
+    _memories_app,
+    name="memories",
+    help="Browse, search, and manage the project memory database.",
+)
 
 
 @app.command()

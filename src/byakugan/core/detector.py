@@ -9,7 +9,8 @@ from pathlib import Path
 from byakugan.core.config import ProjectProfile
 
 
-# Maps detected framework/lib → suggested template path (relative to templates/)
+# ── Template routing maps ─────────────────────────────────────────────────────
+
 FRAMEWORK_TO_TEMPLATE: dict[str, str] = {
     # Python web
     "fastapi": "project-types/web-backend.md",
@@ -56,36 +57,89 @@ FRAMEWORK_TO_TEMPLATE: dict[str, str] = {
 }
 
 LANGUAGE_TO_TEMPLATE: dict[str, str] = {
-    "python": "languages/python.md",
+    "python":     "languages/python.md",
     "typescript": "languages/typescript.md",
     "javascript": "languages/javascript.md",
-    "rust": "languages/rust.md",
-    "go": "languages/go.md",
-    "java": "languages/java.md",
-    "kotlin": "languages/kotlin.md",
-    "swift": "languages/swift.md",
-    "ruby": "languages/ruby.md",
-    "php": "languages/php.md",
-    "c": "languages/c.md",
-    "cpp": "languages/cpp.md",
-    "css": "languages/css.md",
+    "rust":       "languages/rust.md",
+    "go":         "languages/go.md",
+    "java":       "languages/java.md",
+    "kotlin":     "languages/kotlin.md",
+    "swift":      "languages/swift.md",
+    "ruby":       "languages/ruby.md",
+    "php":        "languages/php.md",
+    "c":          "languages/c.md",
+    "cpp":        "languages/cpp.md",
+    "css":        "languages/css.md",
 }
 
-# Templates always suggested when their domain is detected
+# Specialized templates always suggested for certain project types
 ALWAYS_SUGGEST: dict[str, list[str]] = {
-    "web-backend": ["specialized/security-check.md", "specialized/api-design.md"],
-    "api-service": ["specialized/security-check.md", "specialized/api-design.md"],
-    "fullstack-web": ["specialized/security-check.md"],
-    "web-frontend": [],
-    "ml-project": [],
-    "llm-project": ["specialized/security-check.md"],
-    "mobile-app": [],
-    "library-sdk": [],
-    "cli-tool": [],
-    "desktop-app": [],
-    "data-engineering": [],
-    "devops-infrastructure": ["specialized/security-check.md"],
+    "web-backend":          ["specialized/security-check.md", "specialized/api-design.md"],
+    "api-service":          ["specialized/security-check.md", "specialized/api-design.md"],
+    "fullstack-web":        ["specialized/security-check.md"],
+    "web-frontend":         [],
+    "ml-project":           [],
+    "llm-project":          ["specialized/security-check.md"],
+    "mobile-app":           [],
+    "library-sdk":          [],
+    "cli-tool":             [],
+    "desktop-app":          [],
+    "data-engineering":     [],
+    "devops-infrastructure":["specialized/security-check.md"],
 }
+
+# Database indicators in Python/JS deps
+_DB_PYTHON_DEPS: dict[str, str] = {
+    "psycopg2":   "postgresql",
+    "psycopg":    "postgresql",
+    "asyncpg":    "postgresql",
+    "pg8000":     "postgresql",
+    "pymysql":    "mysql",
+    "aiomysql":   "mysql",
+    "pymongo":    "mongodb",
+    "motor":      "mongodb",
+    "redis":      "redis",
+    "aioredis":   "redis",
+    "coredis":    "redis",
+    "cassandra":  "cassandra",
+    "aiofiles":   None,  # ignore
+}
+
+_DB_JS_DEPS: dict[str, str] = {
+    "pg":           "postgresql",
+    "postgres":     "postgresql",
+    "@neondatabase/serverless": "postgresql",
+    "mysql":        "mysql",
+    "mysql2":       "mysql",
+    "mongoose":     "mongodb",
+    "mongodb":      "mongodb",
+    "ioredis":      "redis",
+    "redis":        "redis",
+    "cassandra-driver": "cassandra",
+    "better-sqlite3": "sqlite",
+    "sqlite3":      "sqlite",
+    "@libsql/client": "sqlite",
+}
+
+# .env.example → database key mappings
+_ENV_DB_PATTERNS: list[tuple[str, str]] = [
+    ("DATABASE_URL=postgres",  "postgresql"),
+    ("DATABASE_URL=mysql",     "mysql"),
+    ("DATABASE_URL=sqlite",    "sqlite"),
+    ("MONGO_URI",              "mongodb"),
+    ("MONGODB_URI",            "mongodb"),
+    ("REDIS_URL",              "redis"),
+    ("REDIS_HOST",             "redis"),
+    ("CASSANDRA_HOST",         "cassandra"),
+]
+
+# Directories to always skip during glob searches
+SKIP_DIRS = frozenset({
+    "node_modules", ".venv", "venv", "__pycache__", ".git",
+    "dist", "build", "target", ".tox", ".mypy_cache",
+    ".pytest_cache", ".ruff_cache", "coverage", ".coverage",
+    "htmlcov", "vendor", "third_party",
+})
 
 
 class DetectionResult:
@@ -115,21 +169,69 @@ def detect(root: Path) -> DetectionResult:
     _detect_swift(root, result)
     _detect_c_cpp(root, result)
 
-    # Infer project type from presence of certain files if not yet detected
+    # Scan .env.example / .env.template for infrastructure hints
+    _scan_env_file(root, profile)
+
+    # Infer project type from files if not yet determined
     _infer_project_type(root, result)
 
-    # Add specialized templates based on project types detected
+    # Monorepo detection hint
+    _detect_monorepo(root, result)
+
+    # Specialized templates based on project types
     for pt in profile.project_types:
         pt_key = pt.replace("project-types/", "").replace(".md", "")
         for spec in ALWAYS_SUGGEST.get(pt_key, []):
             result.add_template(spec, "inferred")
 
-    # Always suggest testing and database if we have a backend
     if any("backend" in t or "fullstack" in t for t in profile.project_types):
         result.add_template("specialized/testing-strategy.md", "inferred")
         result.add_template("specialized/database-design.md", "inferred")
 
     return result
+
+
+def detect_drift(root: Path, stored_profile: ProjectProfile) -> dict[str, list[str]]:
+    """
+    Re-detect the project and return a diff against the stored profile.
+    Returns {"added": [...], "removed": [...]} for languages, frameworks, tools.
+    """
+    current = detect(root)
+    cp = current.profile
+
+    added: list[str] = []
+    removed: list[str] = []
+
+    # Languages
+    for lang in cp.languages:
+        if lang not in stored_profile.languages:
+            added.append(f"language: {lang}")
+    for lang in stored_profile.languages:
+        if lang not in cp.languages:
+            removed.append(f"language: {lang}")
+
+    # Frameworks
+    for fw in cp.frameworks:
+        if fw not in stored_profile.frameworks:
+            added.append(f"framework: {fw}")
+    for fw in stored_profile.frameworks:
+        if fw not in cp.frameworks:
+            removed.append(f"framework: {fw}")
+
+    # Tools
+    for attr in ("test_runner", "linter", "formatter", "package_manager"):
+        new_val = getattr(cp, attr)
+        old_val = getattr(stored_profile, attr)
+        if new_val and new_val != old_val:
+            added.append(f"{attr}: {new_val}")
+            if old_val:
+                removed.append(f"{attr}: {old_val}")
+
+    # Database
+    if cp.database and cp.database != stored_profile.database:
+        added.append(f"database: {cp.database}")
+
+    return {"added": added, "removed": removed}
 
 
 # ── Language detectors ────────────────────────────────────────────────────────
@@ -173,7 +275,6 @@ def _detect_python(root: Path, result: DetectionResult) -> None:
     else:
         profile.package_manager = "pip"
 
-    # Collect all deps
     deps = _collect_python_deps(root)
 
     # Framework / project type
@@ -183,7 +284,8 @@ def _detect_python(root: Path, result: DetectionResult) -> None:
             if pt not in profile.project_types and "project-types" in template:
                 profile.project_types.append(template)
                 result.add_template(template)
-            profile.frameworks.append(dep)
+            if dep not in profile.frameworks:
+                profile.frameworks.append(dep)
 
     # Test runner
     if "pytest" in deps or (root / "pytest.ini").exists() or (root / "conftest.py").exists():
@@ -209,12 +311,19 @@ def _detect_python(root: Path, result: DetectionResult) -> None:
     elif "pyright" in deps:
         profile.type_checker = "pyright"
 
-    # Check if it's a library/SDK
-    if (root / "pyproject.toml").exists():
+    # Database detection from Python deps
+    if not profile.database:
+        for dep, db in _DB_PYTHON_DEPS.items():
+            if db and dep in deps:
+                profile.database = db
+                break
+
+    # Library/SDK detection
+    if (root / "pyproject.toml").exists() and not profile.project_types:
         try:
             with open(root / "pyproject.toml", "rb") as f:
                 data = tomllib.load(f)
-            if data.get("project", {}).get("name") and not profile.project_types:
+            if data.get("project", {}).get("name"):
                 profile.project_types.append("project-types/library-sdk.md")
                 result.add_template("project-types/library-sdk.md", "inferred")
         except Exception:
@@ -232,7 +341,6 @@ def _collect_python_deps(root: Path) -> set[str]:
             with open(root / "pyproject.toml", "rb") as f:
                 data = tomllib.load(f)
             for dep in data.get("project", {}).get("dependencies", []):
-                # "fastapi>=0.100" → "fastapi"
                 pkg = re.split(r"[>=<!\[;\s]", dep)[0].strip()
                 deps.add(_norm(pkg))
             for group in data.get("dependency-groups", {}).values():
@@ -240,7 +348,6 @@ def _collect_python_deps(root: Path) -> set[str]:
                     if isinstance(dep, str):
                         pkg = re.split(r"[>=<!\[;\s]", dep)[0].strip()
                         deps.add(_norm(pkg))
-            # tool.poetry.dependencies
             for dep in data.get("tool", {}).get("poetry", {}).get("dependencies", {}).keys():
                 deps.add(_norm(dep))
         except Exception:
@@ -271,17 +378,17 @@ def _detect_javascript(root: Path, result: DetectionResult) -> None:
 
     profile = result.profile
 
-    # Determine TypeScript vs JavaScript
     all_deps = {
         **data.get("dependencies", {}),
         **data.get("devDependencies", {}),
     }
     dep_names = {k.lower().lstrip("@").split("/")[-1] for k in all_deps}
+    dep_keys_raw = set(all_deps.keys())
 
     is_ts = (
         "typescript" in all_deps
         or list(root.glob("tsconfig*.json"))
-        or list(root.glob("src/**/*.ts"))
+        or _safe_glob_shallow(root, "**/*.ts", depth=3)
     )
 
     lang = "typescript" if is_ts else "javascript"
@@ -336,8 +443,16 @@ def _detect_javascript(root: Path, result: DetectionResult) -> None:
     elif "biome" in dep_names and not profile.formatter:
         profile.formatter = "biome"
 
-    # CSS detection
-    if any(f.suffix == ".css" for f in root.rglob("*.css") if ".byakugan" not in str(f)):
+    # Database detection from JS deps
+    if not profile.database:
+        for dep_raw, db in _DB_JS_DEPS.items():
+            dep_norm = dep_raw.lower().lstrip("@").split("/")[-1]
+            if dep_norm in dep_names or dep_raw in dep_keys_raw:
+                profile.database = db
+                break
+
+    # CSS detection (shallow, respects skip dirs)
+    if _safe_glob_shallow(root, "**/*.css", depth=4):
         if "css" not in profile.languages:
             profile.languages.append("css")
             result.add_template(LANGUAGE_TO_TEMPLATE["css"], "inferred")
@@ -356,8 +471,8 @@ def _detect_rust(root: Path, result: DetectionResult) -> None:
         with open(root / "Cargo.toml", "rb") as f:
             data = tomllib.load(f)
         deps = set(data.get("dependencies", {}).keys())
-        if "axum" in deps or "actix-web" in deps or "warp" in deps:
-            profile.frameworks.extend([d for d in ["axum", "actix-web", "warp"] if d in deps])
+        if "axum" in deps or "actix-web" in deps or "warp" in deps or "rocket" in deps:
+            profile.frameworks.extend([d for d in ["axum", "actix-web", "warp", "rocket"] if d in deps])
             profile.project_types.append("project-types/web-backend.md")
             result.add_template("project-types/web-backend.md")
         if "clap" in deps or not (root / "src" / "lib.rs").exists():
@@ -398,10 +513,10 @@ def _detect_java(root: Path, result: DetectionResult) -> None:
     profile = result.profile
     profile.package_manager = "gradle" if has_gradle else "maven"
 
-    # Kotlin vs Java
+    # Use shallow glob to avoid expensive full tree scan
     has_kotlin = (
         (root / "build.gradle.kts").exists()
-        or list(root.glob("**/*.kt"))
+        or _safe_glob_shallow(root, "**/*.kt", depth=5)
     )
     if has_kotlin:
         profile.languages.append("kotlin")
@@ -410,7 +525,6 @@ def _detect_java(root: Path, result: DetectionResult) -> None:
         profile.languages.append("java")
         result.add_template(LANGUAGE_TO_TEMPLATE["java"])
 
-    # Check for Spring Boot
     if has_maven:
         try:
             content = (root / "pom.xml").read_text()
@@ -421,7 +535,6 @@ def _detect_java(root: Path, result: DetectionResult) -> None:
         except Exception:
             pass
 
-    # Check for Android
     if (root / "app").is_dir() and (root / "gradle.properties").exists():
         profile.project_types.append("project-types/mobile-app.md")
         result.add_template("project-types/mobile-app.md")
@@ -496,8 +609,8 @@ def _detect_swift(root: Path, result: DetectionResult) -> None:
 
 
 def _detect_c_cpp(root: Path, result: DetectionResult) -> None:
-    has_cpp = list(root.glob("**/*.cpp")) or list(root.glob("**/*.cc")) or list(root.glob("**/*.cxx"))
-    has_c = list(root.glob("**/*.c")) and not has_cpp
+    has_cpp = _safe_glob_shallow(root, "**/*.cpp", depth=4) or _safe_glob_shallow(root, "**/*.cc", depth=4)
+    has_c = _safe_glob_shallow(root, "**/*.c", depth=4) and not has_cpp
     has_cmake = (root / "CMakeLists.txt").exists()
 
     profile = result.profile
@@ -515,19 +628,89 @@ def _detect_c_cpp(root: Path, result: DetectionResult) -> None:
 def _infer_project_type(root: Path, result: DetectionResult) -> None:
     profile = result.profile
     if profile.project_types:
-        return  # already detected
+        return
 
-    # Infrastructure indicators
-    has_docker = (root / "Dockerfile").exists() or (root / "docker-compose.yml").exists()
-    has_tf = list(root.glob("*.tf")) or list(root.glob("**/*.tf"))
-    has_k8s = list(root.glob("**/*.yaml")) and (root / ".github" / "workflows").is_dir()
+    has_docker = (root / "Dockerfile").exists() or (root / "docker-compose.yml").exists() or (root / "docker-compose.yaml").exists()
+    has_tf = list(root.glob("*.tf")) or _safe_glob_shallow(root, "**/*.tf", depth=3)
+    has_k8s = _safe_glob_shallow(root, "**/*.yaml", depth=3) and (root / ".github" / "workflows").is_dir()
 
     if has_tf or (has_docker and has_k8s):
         profile.project_types.append("project-types/devops-infrastructure.md")
         result.add_template("project-types/devops-infrastructure.md", "inferred")
 
-    # CLI indicators
     if not profile.project_types:
         if any(f.name in ("Makefile", "Taskfile.yml") for f in root.iterdir() if f.is_file()):
             profile.project_types.append("project-types/cli-tool.md")
             result.add_template("project-types/cli-tool.md", "inferred")
+
+
+def _detect_monorepo(root: Path, result: DetectionResult) -> None:
+    """Detect monorepo structure and add a note to the profile context."""
+    profile = result.profile
+
+    # Multiple package.json at different depths = JS monorepo
+    pkg_files = [
+        p for p in root.glob("*/package.json")
+        if not SKIP_DIRS.intersection(p.parts)
+    ]
+    # pyproject.toml siblings = Python monorepo / workspace
+    pyproject_files = [
+        p for p in root.glob("*/pyproject.toml")
+        if not SKIP_DIRS.intersection(p.parts)
+    ]
+
+    if len(pkg_files) >= 2 or len(pyproject_files) >= 2:
+        hint = "monorepo"
+        if profile.context:
+            if "monorepo" not in profile.context:
+                profile.context = f"{profile.context}; {hint}"
+        else:
+            profile.context = hint
+
+
+def _scan_env_file(root: Path, profile: ProjectProfile) -> None:
+    """
+    Scan .env.example / .env.template / .env.sample for infrastructure signals.
+    Only sets profile fields that are not already detected.
+    """
+    if profile.database:
+        return
+
+    for env_name in (".env.example", ".env.template", ".env.sample", ".env.test"):
+        env_file = root / env_name
+        if not env_file.exists():
+            continue
+        try:
+            content = env_file.read_text(encoding="utf-8", errors="ignore").upper()
+            for pattern, db in _ENV_DB_PATTERNS:
+                if pattern.upper() in content:
+                    profile.database = db
+                    return
+        except Exception:
+            pass
+
+
+# ── Utilities ─────────────────────────────────────────────────────────────────
+
+def _safe_glob_shallow(root: Path, pattern: str, depth: int = 4) -> list[Path]:
+    """
+    Glob with depth limit and SKIP_DIRS filtering.
+    Avoids scanning node_modules, .venv, target, etc.
+    """
+    results: list[Path] = []
+    try:
+        for p in root.glob(pattern):
+            # Check depth
+            try:
+                rel_parts = p.relative_to(root).parts
+                if len(rel_parts) > depth:
+                    continue
+            except ValueError:
+                continue
+            # Skip internal dirs
+            if SKIP_DIRS.intersection(p.parts):
+                continue
+            results.append(p)
+    except Exception:
+        pass
+    return results

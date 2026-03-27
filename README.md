@@ -1,8 +1,14 @@
+<div align="center">
+
 # Byakugan
 
 **Active guidelines and memory system for Claude Code.**
 
-Byakugan keeps Claude working the right way — consistently, across every project. It installs opinionated, project-aware guidelines into your repo, hooks into every Claude tool use to surface the right rules at the right moment, and builds a local memory database that gets smarter as you work.
+Byakugan keeps Claude working the right way — consistently, across every project.<br/>
+It installs opinionated, project-aware guidelines into your repo, hooks into every Claude tool use<br/>
+to surface the right rules at the right moment, and builds a local memory database that gets smarter as you work.
+
+<br/>
 
 ![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)
 ![uv](https://img.shields.io/badge/uv-package%20manager-DE5FE9?logo=astral&logoColor=white)
@@ -10,7 +16,11 @@ Byakugan keeps Claude working the right way — consistently, across every proje
 ![Claude Code](https://img.shields.io/badge/Claude%20Code-hooks-D97757?logo=anthropic&logoColor=white)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
-![Byakugan](https://giffiles.alphacoders.com/215/215559.gif)
+<br/>
+
+<img src="https://giffiles.alphacoders.com/215/215559.gif" width="500" alt="Byakugan" />
+
+</div>
 
 ---
 

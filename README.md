@@ -10,6 +10,8 @@ Byakugan keeps Claude working the right way — consistently, across every proje
 ![Claude Code](https://img.shields.io/badge/Claude%20Code-hooks-D97757?logo=anthropic&logoColor=white)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
+![Byakugan](https://giffiles.alphacoders.com/215/215559.gif)
+
 ---
 
 ## Quickstart

@@ -12,7 +12,7 @@ from byakugan.core.adapter import template_display_name
 from byakugan.core.config import (
     find_byakugan_root,
     get_byakugan_dir,
-    get_memory_path,
+    get_db_path,
     load_config,
 )
 from byakugan.core.memory import count
@@ -85,7 +85,7 @@ def run() -> None:
     # ── System checks ─────────────────────────────────────────────────────────
     hooks_ok = hooks.hooks_installed(byakugan_root)
     byakugan_ok = hooks.byakugan_in_path()
-    mem_path = get_memory_path(byakugan_root)
+    mem_path = get_db_path(byakugan_root)
     mem_count = count(mem_path) if mem_path.exists() else 0
     claude_md_path = byakugan_root / "CLAUDE.md"
 

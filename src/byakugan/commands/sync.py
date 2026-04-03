@@ -11,13 +11,11 @@ from byakugan.core import adapter, claude_md
 from byakugan.core.config import (
     find_byakugan_root,
     get_byakugan_dir,
-    get_memory_path,
     load_config,
     now_iso,
     save_config,
 )
-from byakugan.core.detector import detect, detect_drift
-from byakugan.core.memory import init_db
+from byakugan.core.detector import detect_drift
 
 console = Console()
 
@@ -44,8 +42,7 @@ def run() -> None:
     console.print()
 
     with console.status("Scanning project…"):
-        drift = detect_drift(byakugan_root, stored_profile)
-        fresh = detect(byakugan_root)
+        drift, fresh = detect_drift(byakugan_root, stored_profile)
 
     added   = drift["added"]
     removed = drift["removed"]
@@ -115,6 +112,7 @@ def run() -> None:
     config.project = stored_profile
 
     # Optionally add newly suggested templates
+    added_new = False
     if new_templates:
         add_them = Confirm.ask(f"Add {len(new_templates)} new template(s)?", default=True)
         if add_them:
@@ -125,6 +123,7 @@ def run() -> None:
                     content = adapter.adapt_template(t, stored_profile)
                     dest.write_text(content, encoding="utf-8")
                 config.active_templates.extend(new_templates)
+            added_new = True
 
     # Refresh existing template context blocks with new profile
     refresh = Confirm.ask("Refresh context blocks in existing templates?", default=True)
@@ -142,7 +141,7 @@ def run() -> None:
     claude_md.write(config, byakugan_root)
 
     console.print(f"{OK} Profile updated.")
-    if new_templates and add_them:
+    if added_new:
         console.print(f"{OK} Added {len(new_templates)} template(s).")
     console.print()
     console.print("Run [bold]byakugan status[/bold] to verify.")

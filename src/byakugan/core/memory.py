@@ -91,11 +91,6 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE memories ADD COLUMN surface_count INTEGER NOT NULL DEFAULT 0")
 
 
-def init_db(db_path: Path) -> None:
-    conn = _connect(db_path)
-    conn.close()
-
-
 def infer_type(content: str) -> str:
     lower = content.lower().strip()
     for prefix, t in TYPE_PREFIXES.items():

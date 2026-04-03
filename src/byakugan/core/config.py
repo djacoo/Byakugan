@@ -12,7 +12,7 @@ import tomli_w
 
 BYAKUGAN_DIR = ".byakugan"
 CONFIG_FILE = "byakugan.toml"
-MEMORY_FILE = "memory.db"
+DB_FILE = "byakugan.db"
 
 
 @dataclass
@@ -35,11 +35,13 @@ class ProjectProfile:
 
 @dataclass
 class ByakuganConfig:
-    version: str = "0.1.0"
+    version: str = "0.3.0"
     initialized_at: str = ""
     last_updated: str | None = None
     active_templates: list[str] = field(default_factory=list)
     project: ProjectProfile = field(default_factory=ProjectProfile)
+    superpowers_detected: bool = False
+    superpowers_installed_by_byakugan: bool = False
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "ByakuganConfig":
@@ -55,9 +57,9 @@ class ByakuganConfig:
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
-        # Remove None values from project for clean TOML
+        # Strip None from project sub-dict and top-level (tomli_w can't serialize None)
         d["project"] = {k: v for k, v in d["project"].items() if v is not None}
-        return d
+        return {k: v for k, v in d.items() if v is not None}
 
 
 def find_byakugan_root(start: Path | None = None) -> Path | None:
@@ -77,8 +79,13 @@ def get_config_path(root: Path) -> Path:
     return root / BYAKUGAN_DIR / CONFIG_FILE
 
 
+def get_db_path(root: Path) -> Path:
+    return root / BYAKUGAN_DIR / DB_FILE
+
+
+# Backward compat alias
 def get_memory_path(root: Path) -> Path:
-    return root / BYAKUGAN_DIR / MEMORY_FILE
+    return get_db_path(root)
 
 
 def load_config(root: Path) -> ByakuganConfig:

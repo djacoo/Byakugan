@@ -442,6 +442,32 @@ def get_all(db_path: Path, limit: int = 50) -> list[Memory]:
     ]
 
 
+def get_high_importance(db_path: Path, min_importance: int = 4, limit: int = 5) -> list[Memory]:
+    """Return highest-importance memories."""
+    if not db_path.exists():
+        return []
+    conn = _connect(db_path)
+    rows = conn.execute(
+        "SELECT * FROM memories WHERE importance >= ? ORDER BY importance DESC, created_at DESC LIMIT ?",
+        (min_importance, limit),
+    ).fetchall()
+    conn.close()
+    return [
+        Memory(
+            id=r["id"],
+            created_at=r["created_at"],
+            type=r["type"],
+            content=r["content"],
+            context=json.loads(r["context"] or "{}"),
+            tags=json.loads(r["tags"] or "[]"),
+            importance=r["importance"],
+            last_surfaced_at=r["last_surfaced_at"],
+            surface_count=r["surface_count"],
+        )
+        for r in rows
+    ]
+
+
 def count(db_path: Path) -> int:
     if not db_path.exists():
         return 0
@@ -449,6 +475,42 @@ def count(db_path: Path) -> int:
     n = conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0]
     conn.close()
     return n
+
+
+def get_by_id(db_path: Path, memory_id: int) -> Optional[Memory]:
+    """Fetch a single memory by its primary key."""
+    if not db_path.exists():
+        return None
+    conn = _connect(db_path)
+    row = conn.execute("SELECT * FROM memories WHERE id = ?", (memory_id,)).fetchone()
+    conn.close()
+    if row is None:
+        return None
+    return Memory(
+        id=row["id"],
+        created_at=row["created_at"],
+        type=row["type"],
+        content=row["content"],
+        context=json.loads(row["context"] or "{}"),
+        tags=json.loads(row["tags"] or "[]"),
+        importance=row["importance"],
+        last_surfaced_at=row["last_surfaced_at"],
+        surface_count=row["surface_count"],
+    )
+
+
+def update_content(db_path: Path, memory_id: int, content: str, importance: int = 3) -> bool:
+    """Update the content and importance of an existing memory."""
+    if not db_path.exists():
+        return False
+    conn = _connect(db_path)
+    cur = conn.execute(
+        "UPDATE memories SET content = ?, importance = ? WHERE id = ?",
+        (content, max(1, min(5, importance)), memory_id),
+    )
+    conn.commit()
+    conn.close()
+    return cur.rowcount > 0
 
 
 def delete(db_path: Path, memory_id: int) -> bool:

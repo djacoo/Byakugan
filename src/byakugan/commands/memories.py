@@ -8,8 +8,9 @@ from rich.console import Console
 from rich.prompt import Confirm
 from rich.table import Table
 
-from byakugan.core.config import find_byakugan_root, get_memory_path
+from byakugan.core.config import find_byakugan_root, get_db_path
 from byakugan.core import memory as mem
+from typing import Annotated
 
 console = Console()
 
@@ -35,7 +36,7 @@ def _require_root() -> tuple[Path, Path]:
     if root is None:
         console.print("[red]No Byakugan setup found. Run [bold]byakugan init[/bold] first.[/red]")
         raise typer.Exit(1)
-    return root, get_memory_path(root)
+    return root, get_db_path(root)
 
 
 @app.command(name="list")
@@ -121,8 +122,7 @@ def forget(
     _, db_path = _require_root()
 
     # Show the memory before deleting
-    all_mems = mem.get_all(db_path, limit=500)
-    target = next((m for m in all_mems if m.id == memory_id), None)
+    target = mem.get_by_id(db_path, memory_id)
 
     if target is None:
         console.print(f"[red]No memory with ID {memory_id}.[/red]")
@@ -143,6 +143,40 @@ def forget(
         console.print(f"[bold green]✓[/bold green] Memory {memory_id} deleted.")
     else:
         console.print(f"[red]Could not delete memory {memory_id}.[/red]")
+        raise typer.Exit(1)
+
+
+@app.command()
+def edit(
+    memory_id: int = typer.Argument(..., help="ID of the memory to edit (see 'list')."),
+    content: str = typer.Argument(..., help="New content for the memory."),
+    importance: Annotated[int | None, typer.Option("--importance", "-i", help="New importance 1-5.")] = None,
+) -> None:
+    """Update the content of an existing memory."""
+    _, db_path = _require_root()
+
+    target = mem.get_by_id(db_path, memory_id)
+    if target is None:
+        console.print(f"[red]No memory with ID {memory_id}.[/red]")
+        raise typer.Exit(1)
+
+    color = TYPE_COLORS.get(target.type, "white")
+    console.print()
+    console.print(f"  Current: [{color}]{target.type}[/{color}]  {target.content}")
+    console.print(f"  New:     {content}")
+    console.print()
+
+    confirmed = Confirm.ask("Update this memory?", default=True)
+    if not confirmed:
+        console.print("Aborted.")
+        raise typer.Exit()
+
+    # Use existing importance as base when not explicitly overridden
+    final_importance = importance if importance is not None else target.importance
+    if mem.update_content(db_path, memory_id, content, final_importance):
+        console.print(f"[bold green]✓[/bold green] Memory {memory_id} updated.")
+    else:
+        console.print(f"[red]Could not update memory {memory_id}.[/red]")
         raise typer.Exit(1)
 
 
@@ -177,6 +211,15 @@ def prune(
     decayed = mem.apply_decay(db_path, days_threshold=days)
     removed = mem.prune(db_path, days_threshold=days)
     total_after = mem.count(db_path)
+
+    # Also report pending session events
+    try:
+        from byakugan.core.database import get_pending_event_count
+        pending = get_pending_event_count(db_path)
+        if pending > 0:
+            console.print(f"[dim]{pending} pending session event(s) (compress with: byakugan session save)[/dim]")
+    except Exception:
+        pass
 
     console.print(f"[green]✓[/green] Decayed {decayed} memor{'y' if decayed == 1 else 'ies'}.")
     console.print(f"[green]✓[/green] Removed {removed} low-value memor{'y' if removed == 1 else 'ies'}.")

@@ -11,11 +11,12 @@ from byakugan.core import adapter, claude_md, hooks
 from byakugan.core.config import (
     find_byakugan_root,
     get_byakugan_dir,
-    get_memory_path,
+    get_db_path,
     load_config,
 )
 from byakugan.core.detector import detect_drift
-from byakugan.core.memory import init_db
+from byakugan.core.database import init_db, get_tables, get_pending_event_count
+from byakugan.core.superpowers import is_superpowers_installed
 
 console = Console()
 
@@ -53,6 +54,14 @@ def run() -> None:
         console.print("     Install with: [dim]uv tool install byakugan[/dim]")
         issues.append("byakugan_not_in_path")
 
+    # ── Check: superpowers ───────────────────────────────────────────────
+    if is_superpowers_installed():
+        console.print(f"{OK} Superpowers detected")
+    else:
+        console.print(f"{WARN} Superpowers not detected")
+        console.print("     Install superpowers for full workflow support")
+        issues.append("superpowers_missing")
+
     # ── Check 3: hooks installed ─────────────────────────────────────────────
     if hooks.hooks_installed(byakugan_root):
         console.print(f"{OK} Hooks installed in [dim].claude/settings.local.json[/dim]")
@@ -86,21 +95,43 @@ def run() -> None:
     else:
         console.print(f"{OK} All {len(config.active_templates)} template file(s) present")
 
-    # ── Check 6: memory DB ───────────────────────────────────────────────────
-    mem_path = get_memory_path(byakugan_root)
-    if mem_path.exists():
-        from byakugan.core.memory import count
-        n = count(mem_path)
-        console.print(f"{OK} Memory DB present — {n} entr{'y' if n == 1 else 'ies'}")
+    # ── Check 6: database ────────────────────────────────────────────────
+    db_path = get_db_path(byakugan_root)
+    if db_path.exists():
+        tables = get_tables(db_path)
+        if len(tables) == 4:
+            from byakugan.core.memory import count
+            n = count(db_path)
+            console.print(f"{OK} Database present — {n} memor{'y' if n == 1 else 'ies'}, {len(tables)} tables")
+        else:
+            console.print(f"{FAIL} Database schema incomplete — {len(tables)}/4 tables")
+            issues.append("db_schema_incomplete")
+
+        # Compression backlog check
+        pending = get_pending_event_count(db_path)
+        if pending > 200:
+            console.print(f"{WARN} Compression backlog: {pending} pending events")
+            console.print("     Run [bold]byakugan session save[/bold] to compress")
+            issues.append("compression_backlog")
+        elif pending > 0:
+            console.print(f"{OK} {pending} pending event(s)")
+
+        # Legacy backup check
+        bak_path = byakugan_dir / "memory.db.bak"
+        if bak_path.exists():
+            import os, time as _time
+            age_days = (_time.time() - os.path.getmtime(str(bak_path))) / 86400
+            if age_days > 30:
+                console.print(f"{WARN} Legacy memory.db.bak is {int(age_days)} days old — safe to delete")
     else:
-        console.print(f"{FAIL} Memory DB missing")
+        console.print(f"{FAIL} Database missing")
         issues.append("memory_missing")
 
     # ── Check 7: stack drift ─────────────────────────────────────────────────
     console.print()
     console.print("[dim]Checking for stack drift…[/dim]")
     try:
-        drift = detect_drift(byakugan_root, config.project)
+        drift, _ = detect_drift(byakugan_root, config.project)
         if drift["added"] or drift["removed"]:
             console.print(f"{WARN} Stack drift detected:")
             for item in drift["added"]:
@@ -117,7 +148,7 @@ def run() -> None:
     console.print()
 
     # ── Auto-repair ──────────────────────────────────────────────────────────
-    repairable = [i for i in issues if i != "stack_drift" and i != "byakugan_not_in_path"]
+    repairable = [i for i in issues if i not in {"stack_drift", "byakugan_not_in_path", "superpowers_missing", "compression_backlog"}]
 
     if not repairable and "stack_drift" not in issues:
         console.print("[bold green]Everything looks good.[/bold green]")
@@ -147,8 +178,12 @@ def run() -> None:
                     console.print(f"{OK} Missing templates restored ({len(missing_templates)}).")
 
                 if "memory_missing" in repairable:
-                    init_db(mem_path)
-                    console.print(f"{OK} Memory DB initialized.")
+                    init_db(db_path)
+                    console.print(f"{OK} Database initialized.")
+
+                if "db_schema_incomplete" in repairable:
+                    init_db(db_path)
+                    console.print(f"{OK} Database schema repaired.")
 
             console.print()
             console.print("[bold green]Repair complete.[/bold green]")
